@@ -29,12 +29,18 @@ class MyPhysicsGame extends Forge2DGame {
     );
     // Add camera to the game
     add(camera);
+
+    // Set up the timer to make a random enemy jump every 2 seconds
+    _jumpTimer = Timer(1.0, repeat: true, onTick: _makeRandomEnemyJump)
+      ..start();
   }
 
   late final XmlSpriteSheet aliens;
   late final XmlSpriteSheet elements;
   late final XmlSpriteSheet tiles;
   Player? player;
+
+  late final Timer _jumpTimer;
 
   // Define the desired ground width in terms of tiles
   int groundTileCount = 200;
@@ -157,7 +163,8 @@ class MyPhysicsGame extends Forge2DGame {
 
   @override
   void update(double dt) {
-    super.update(dt);
+    super.update(dt * 2); // Double the delta time for all updates
+    _jumpTimer.update(dt * 2); // Update the jump timer with double speed
 
     if (isMounted &&
         world.children.whereType<Player>().isEmpty &&
@@ -223,6 +230,16 @@ class MyPhysicsGame extends Forge2DGame {
 
     // Reload the game
     await _initializeGame();
+  }
+
+  void _makeRandomEnemyJump() {
+    final enemies = world.children.whereType<Enemy>().toList();
+    if (enemies.isNotEmpty) {
+      final randomEnemy = enemies[_random.nextInt(enemies.length)];
+      // Randomly decide between 10.0 and -10.0
+      final randomVelocity = _random.nextBool() ? 10.0 : -10.0;
+      randomEnemy.jump(-20.0, randomVelocity); // Example jump velocities
+    }
   }
 }
 

@@ -4,25 +4,55 @@ lib\components\background.dart
 import 'dart:math';
 import 'package:flame/components.dart';
 import 'game.dart';
+import 'dart:ui' as ui;
 
-class Background extends SpriteComponent with HasGameReference<MyPhysicsGame> {
-  Background({required super.sprite})
-      : super(
-          anchor: Anchor.center,
-          position: Vector2(0, 0),
-        );
+class Background extends Component with HasGameReference<MyPhysicsGame> {
+  Background({
+    required this.sprite,
+    required this.repeatX,
+    required this.repeatY,
+    this.offsetX = 0.0,
+    this.offsetY = 0.0, // Added offsetY parameter
+  });
+
+  final Sprite sprite;
+  final int repeatX;
+  final int repeatY;
+  final double offsetX;
+  final double offsetY; // Added offsetY property
 
   @override
-  void onMount() {
-    super.onMount();
+  void render(ui.Canvas canvas) {
+    super.render(canvas);
 
-    size = Vector2.all(max(
-      game.camera.visibleWorldRect.width,
-      game.camera.visibleWorldRect.height,
-    ));
+    final backgroundWidth =
+        max(game.camera.visibleWorldRect.width, game.size.x);
+    final backgroundHeight =
+        max(game.camera.visibleWorldRect.height, game.size.y);
+
+    final scale = backgroundWidth / sprite.srcSize.x;
+    final scaley = backgroundHeight / sprite.srcSize.y;
+
+    for (var i = 0; i < repeatX; i++) {
+      sprite.render(
+        canvas,
+        position: Vector2(
+          offsetX + i * sprite.srcSize.x * scale,
+          offsetY + i * sprite.srcSize.y * scale, // Use offsetY here,
+        ),
+        size: Vector2(sprite.srcSize.x * scale, backgroundHeight * scaley),
+      );
+    }
   }
 }
 
+/*
+Vector2.all(max(
+      game.camera.visibleWorldRect.width,
+      game.camera.visibleWorldRect.height,
+    ));
+
+*/
 ```
 
 lib\components\body_component_with_user_data.dart
@@ -60,6 +90,7 @@ import 'dart:ui' as ui;
 import 'package:flame/components.dart';
 import 'package:flame/extensions.dart';
 import 'package:flame_forge2d/flame_forge2d.dart';
+import 'body_component_with_user_data.dart';
 
 const brickScale = 0.5;
 
@@ -300,7 +331,7 @@ Map<BrickDamage, String> brickFileNames(BrickType type, BrickSize size) {
   };
 }
 
-class Brick extends BodyComponent {
+class Brick extends BodyComponentWithUserData {
   Brick({
     required this.type,
     required this.size,
@@ -353,6 +384,7 @@ class Brick extends BodyComponent {
     return super.onLoad();
   }
 }
+
 ```
 
 lib\components\enemy.dart
@@ -419,7 +451,8 @@ class Enemy extends BodyComponentWithUserData with ContactCallbacks {
         (contact.bodyA.linearVelocity - contact.bodyB.linearVelocity)
             .length
             .abs();
-    if (interceptVelocity > 15) {
+    print("Contact on Enemy made with value of ${interceptVelocity}");
+    if (interceptVelocity > 50) {
       removeFromParent();
     }
 
@@ -427,13 +460,12 @@ class Enemy extends BodyComponentWithUserData with ContactCallbacks {
   }
 
   @override
-  update(double dt) {
+  void update(double dt) {
     super.update(dt);
+  }
 
-    if (position.x > camera.visibleWorldRect.right + 10 ||
-        position.x < camera.visibleWorldRect.left - 10) {
-      removeFromParent();
-    }
+  void jump(double verticalVelocity, double horizontalVelocity) {
+    body.linearVelocity = Vector2(horizontalVelocity, verticalVelocity);
   }
 }
 
@@ -470,22 +502,49 @@ class MyPhysicsGame extends Forge2DGame {
   MyPhysicsGame({required double screenWidth, required double screenHeight})
       : super(
           gravity: Vector2(0, 10),
-          camera: CameraComponent.withFixedResolution(
-              width: screenWidth, height: screenHeight),
-        );
+        ) {
+    // Initialize camera with fixed resolution
+    camera = CameraComponent.withFixedResolution(
+      width: screenWidth,
+      height: screenHeight,
+    );
+    // Add camera to the game
+    add(camera);
+
+    // Set up the timer to make a random enemy jump every 2 seconds
+    _jumpTimer = Timer(1.0, repeat: true, onTick: _makeRandomEnemyJump)
+      ..start();
+  }
 
   late final XmlSpriteSheet aliens;
   late final XmlSpriteSheet elements;
   late final XmlSpriteSheet tiles;
+  Player? player;
+
+  late final Timer _jumpTimer;
+
+  // Define the desired ground width in terms of tiles
+  int groundTileCount = 200;
+  double groundWidth = groundSize * 200;
 
   @override
   FutureOr<void> onLoad() async {
+    await _loadAssets();
+    await _initializeGame();
+    // Set the zoom level after initializing the game
+    camera.viewfinder.zoom = 5.0; // Set the desired zoom level here
+    return super.onLoad();
+  }
+
+  Future<void> _loadAssets() async {
+    // Load images and XML sprite sheets only once
     final [backgroundImage, aliensImage, elementsImage, tilesImage] = await [
       images.load('colored_grass.png'),
       images.load('spritesheet_aliens.png'),
       images.load('spritesheet_elements.png'),
       images.load('spritesheet_tiles.png'),
     ].wait;
+
     aliens = XmlSpriteSheet(aliensImage,
         await rootBundle.loadString('assets/spritesheet_aliens.xml'));
     elements = XmlSpriteSheet(elementsImage,
@@ -493,21 +552,55 @@ class MyPhysicsGame extends Forge2DGame {
     tiles = XmlSpriteSheet(tilesImage,
         await rootBundle.loadString('assets/spritesheet_tiles.xml'));
 
-    await world.add(Background(sprite: Sprite(backgroundImage)));
+    // Initialize the background sprite
+    _backgroundSprite = Sprite(backgroundImage);
+  }
+
+  late final Sprite _backgroundSprite;
+
+  Future<void> _initializeGame() async {
+    // Clear any existing components
+    world.children.clear();
+
+    // Add background
+    await addBackground();
+
+    // Add ground
     await addGround();
-    unawaited(addBricks().then((_) => addEnemies())); // Edit this line
+
+    // Add bricks and enemies
+    unawaited(addBricks().then((_) => addEnemies()));
+
+    // Add player
     await addPlayer();
 
-    return super.onLoad();
+    // Set the camera to follow the player
+    if (player != null) {
+      camera.follow(player!);
+    }
+  }
+
+  Future<void> addBackground() async {
+    await world.add(Background(
+      sprite: _backgroundSprite,
+      repeatX: 5, // Repeat the background 5 times
+      repeatY: 5,
+      offsetX: -250,
+      offsetY: 0, // Start the background 50 pixels to the left
+    ));
   }
 
   Future<void> addGround() {
+    double tileWidth = groundSize;
+    double overlap = 1.0; // Overlap each tile by 1 pixel
+
+    //Example Fixed Y Coordinate for the ground
+    double groundY = 100.0; //Example: Place the ground at y=100
     return world.addAll([
-      for (var x = camera.visibleWorldRect.left;
-          x < camera.visibleWorldRect.right + groundSize;
-          x += groundSize)
+      for (var i = 0; i < groundTileCount; i++)
         Ground(
-          Vector2(x, (camera.visibleWorldRect.height - groundSize) / 2),
+          //Calculate each tile's x position
+          Vector2(i * (tileWidth - overlap), groundY),
           tiles.getSprite('grass.png'),
         ),
     ]);
@@ -516,18 +609,19 @@ class MyPhysicsGame extends Forge2DGame {
   final _random = Random();
 
   Future<void> addBricks() async {
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 15; i++) {
       final type = BrickType.randomType;
       final size = BrickSize.randomSize;
+      //Example Coordinates for Bricks
+      double brickX = 50.0 + i * 20.0; // Adjust as needed
+      double brickY = 20.0; // Adjust as needed
       await world.add(
         Brick(
           type: type,
           size: size,
           damage: BrickDamage.some,
-          position: Vector2(
-              camera.visibleWorldRect.right / 3 +
-                  (_random.nextDouble() * 5 - 2.5),
-              0),
+          //Use fixed coordinates
+          position: Vector2(brickX, brickY),
           sprites: brickFileNames(type, size).map(
             (key, filename) => MapEntry(
               key,
@@ -536,45 +630,50 @@ class MyPhysicsGame extends Forge2DGame {
           ),
         ),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
     }
   }
 
-  Future<void> addPlayer() async => world.add(
-        // Add from here
-        Player(
-          Vector2(camera.visibleWorldRect.left * 2 / 3, 0),
-          aliens.getSprite(PlayerColor.randomColor.fileName),
-        ),
-      );
+  Future<void> addPlayer() async {
+    player = Player(
+      Vector2(190, 90),
+      aliens.getSprite(PlayerColor.randomColor.fileName),
+    );
+    await world.add(player!);
+  }
 
   @override
-  update(dt) {
-    super.update(dt);
-    if (isMounted && // Modify from here
+  void update(double dt) {
+    super.update(dt * 2); // Double the delta time for all updates
+    _jumpTimer.update(dt * 2); // Update the jump timer with double speed
+
+    if (isMounted &&
         world.children.whereType<Player>().isEmpty &&
         world.children.whereType<Enemy>().isNotEmpty) {
       addPlayer();
+      if (player != null) {
+        camera.follow(player!);
+      }
     }
     if (isMounted &&
         enemiesFullyAdded &&
         world.children.whereType<Enemy>().isEmpty &&
-        world.children.whereType<TextComponent>().isEmpty) {
-      world.addAll(
-        [
-          (position: Vector2(0.5, 0.5), color: Colors.white),
-          (position: Vector2.zero(), color: Colors.orangeAccent),
-        ].map(
-          (e) => TextComponent(
-            text: 'You win!',
-            anchor: Anchor.center,
-            position: e.position,
-            textRenderer: TextPaint(
-              style: TextStyle(color: e.color, fontSize: 16),
-            ),
+        world.children.whereType<FollowingTextComponent>().isEmpty) {
+      world.add(
+        FollowingTextComponent(
+          camera: camera,
+          text: 'You Win!',
+          anchor: Anchor.center,
+          textRenderer: TextPaint(
+            style: TextStyle(color: Colors.white, fontSize: 16),
           ),
         ),
       );
+
+      // Restart the game after 5 seconds
+      Future<void>.delayed(const Duration(seconds: 5), () {
+        restart();
+      });
     }
   }
 
@@ -582,19 +681,46 @@ class MyPhysicsGame extends Forge2DGame {
 
   Future<void> addEnemies() async {
     await Future<void>.delayed(const Duration(seconds: 2));
-    for (var i = 0; i < 3; i++) {
+    for (var i = 0; i < 11; i++) {
+      // Example Coordinates for Enemies
+      double enemyX = 80.0 + i * 30.0; // Adjust as needed
+      double enemyY = 10.0; // Adjust as needed
       await world.add(
         Enemy(
-          Vector2(
-              camera.visibleWorldRect.right / 3 +
-                  (_random.nextDouble() * 7 - 3.5),
-              (_random.nextDouble() * 3)),
+          // Use fixed coordinates
+          Vector2(enemyX, enemyY),
           aliens.getSprite(EnemyColor.randomColor.fileName),
         ),
       );
-      await Future<void>.delayed(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
     }
-    enemiesFullyAdded = true; // To here.
+    enemiesFullyAdded = true;
+  }
+
+  void restart() async {
+    // Reset game-specific state variables
+    enemiesFullyAdded = false;
+
+    // Properly remove all components from the world
+    for (var component in List<Component>.from(world.children)) {
+      world.remove(component);
+    }
+
+    // Ensure all components are removed before reinitializing
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // Reload the game
+    await _initializeGame();
+  }
+
+  void _makeRandomEnemyJump() {
+    final enemies = world.children.whereType<Enemy>().toList();
+    if (enemies.isNotEmpty) {
+      final randomEnemy = enemies[_random.nextInt(enemies.length)];
+      // Randomly decide between 10.0 and -10.0
+      final randomVelocity = _random.nextBool() ? 10.0 : -10.0;
+      randomEnemy.jump(-20.0, randomVelocity); // Example jump velocities
+    }
   }
 }
 
@@ -624,6 +750,26 @@ class XmlSpriteSheet {
       srcPosition: rect.topLeft.toVector2(),
       srcSize: rect.size.toVector2(),
     );
+  }
+}
+
+class FollowingTextComponent extends TextComponent {
+  FollowingTextComponent({
+    required this.camera,
+    required super.text,
+    required super.textRenderer,
+    super.anchor,
+    super.priority,
+    super.children,
+  });
+
+  final CameraComponent camera;
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    // Update the position based on the camera's position
+    position = camera.getCameraPosition();
   }
 }
 
@@ -676,9 +822,11 @@ import 'package:flame/effects.dart';
 import 'package:flame/events.dart';
 import 'package:flame_forge2d/flame_forge2d.dart';
 import 'package:flutter/material.dart';
+import 'body_component_with_user_data.dart';
 
 const playerSize = 5.0;
 
+// Enums are efficient for representing a fixed set of values, no changes needed
 enum PlayerColor {
   pink,
   blue,
@@ -692,7 +840,8 @@ enum PlayerColor {
       'alien${toString().split('.').last.capitalize}_round.png';
 }
 
-class Player extends BodyComponent with DragCallbacks {
+class Player extends BodyComponentWithUserData
+    with DragCallbacks, ContactCallbacks {
   Player(Vector2 position, Sprite sprite)
       : _sprite = sprite,
         super(
@@ -714,6 +863,7 @@ class Player extends BodyComponent with DragCallbacks {
 
   @override
   Future<void> onLoad() {
+    // Component creation is efficient, no changes needed
     addAll([
       CustomPainterComponent(
         painter: _DragPainter(this),
@@ -735,12 +885,15 @@ class Player extends BodyComponent with DragCallbacks {
   update(double dt) {
     super.update(dt);
 
+    // Cache visibleWorldRect for performance
+    var visibleRect = camera.visibleWorldRect;
+
     if (!body.isAwake) {
       removeFromParent();
     }
 
-    if (position.x > camera.visibleWorldRect.right + 10 ||
-        position.x < camera.visibleWorldRect.left - 10) {
+    if (position.x > visibleRect.right + 10 ||
+        position.x < visibleRect.left - 10) {
       removeFromParent();
     }
   }
@@ -768,6 +921,8 @@ class Player extends BodyComponent with DragCallbacks {
   void onDragEnd(DragEndEvent event) {
     super.onDragEnd(event);
     if (body.bodyType == BodyType.static) {
+      // Finding the first child of a specific type is generally efficient
+      // but could be optimized further if there are many children.
       children
           .whereType<CustomPainterComponent>()
           .firstOrNull
@@ -781,6 +936,7 @@ class Player extends BodyComponent with DragCallbacks {
   }
 }
 
+// String extension is efficient, no changes needed
 extension on String {
   String get capitalize =>
       characters.first.toUpperCase() + characters.skip(1).toLowerCase().join();
@@ -793,6 +949,7 @@ class _DragPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Vector and canvas operations are generally efficient, no changes needed
     if (player.dragDelta != Vector2.zero()) {
       var center = size.center(Offset.zero);
       canvas.drawLine(
@@ -805,8 +962,10 @@ class _DragPainter extends CustomPainter {
     }
   }
 
+  // No need to check for changes in this simple painter,
+  // so we can return false for shouldRepaint.
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 ```
@@ -816,9 +975,15 @@ lib\main.dart
 ```dart
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Add this import
 import 'components/game.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setPreferredOrientations(
+    // Add this line
+    [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
+  );
   runApp(
     MaterialApp(
       home: GameScreen(),

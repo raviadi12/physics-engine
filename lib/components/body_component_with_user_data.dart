@@ -1,5 +1,7 @@
 import 'package:flame_forge2d/flame_forge2d.dart';
 
+// ... (Your other imports)
+
 class BodyComponentWithUserData extends BodyComponent {
   BodyComponentWithUserData({
     super.key,

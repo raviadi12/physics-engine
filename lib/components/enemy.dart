@@ -31,7 +31,11 @@ enum EnemyColor {
 }
 
 class Enemy extends BodyComponentWithUserData with ContactCallbacks {
-  Enemy(Vector2 position, Sprite sprite)
+  final List<Sprite> explosionSprites;
+  final void Function(Vector2 position) addExplosion;
+
+  Enemy(
+      Vector2 position, Sprite sprite, this.explosionSprites, this.addExplosion)
       : super(
           renderBody: false,
           bodyDef: BodyDef()
@@ -61,7 +65,7 @@ class Enemy extends BodyComponentWithUserData with ContactCallbacks {
             .abs();
     print("Contact on Enemy made with value of ${interceptVelocity}");
     if (interceptVelocity > 50) {
-      removeFromParent();
+      _explode();
     }
 
     super.beginContact(other, contact);
@@ -74,6 +78,14 @@ class Enemy extends BodyComponentWithUserData with ContactCallbacks {
 
   void jump(double verticalVelocity, double horizontalVelocity) {
     body.linearVelocity = Vector2(horizontalVelocity, verticalVelocity);
+  }
+
+  void _explode() {
+    // Calculate the explosion's position to be centered on the enemy
+    final explosionPosition = body.position - Vector2(0, enemySize / 2);
+
+    addExplosion(explosionPosition);
+    removeFromParent();
   }
 }
 

@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flame/components.dart';
 import 'package:flame/extensions.dart';
 import 'package:flame_forge2d/flame_forge2d.dart';
+import 'package:flame_audio/flame_audio.dart'; // Import for audio
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +17,7 @@ import 'brick.dart';
 import 'enemy.dart';
 import 'ground.dart';
 import 'player.dart';
+import 'explosion.dart'; // Import the Explosion class
 
 class MyPhysicsGame extends Forge2DGame {
   MyPhysicsGame({required double screenWidth, required double screenHeight})
@@ -46,12 +48,22 @@ class MyPhysicsGame extends Forge2DGame {
   int groundTileCount = 200;
   double groundWidth = groundSize * 200;
 
+  // Store loaded explosion sprites
+  late final List<Sprite> _explosionSprites;
+
   @override
   FutureOr<void> onLoad() async {
     await _loadAssets();
     await _initializeGame();
     // Set the zoom level after initializing the game
     camera.viewfinder.zoom = 5.0; // Set the desired zoom level here
+
+    // Preload explosion sound
+    await FlameAudio.audioCache.load('explosion_1.mp3');
+
+    // Start playing background music
+    FlameAudio.bgm.play('music2.mp3');
+
     return super.onLoad();
   }
 
@@ -73,6 +85,19 @@ class MyPhysicsGame extends Forge2DGame {
 
     // Initialize the background sprite
     _backgroundSprite = Sprite(backgroundImage);
+
+    // Load explosion sprites
+    _explosionSprites = await Future.wait([
+      images.load('Fire+Sparks1.png'),
+      images.load('Fire+Sparks2.png'),
+      images.load('Fire+Sparks3.png'),
+      images.load('Fire+Sparks4.png'),
+      images.load('Fire+Sparks5.png'),
+      images.load('Fire+Sparks6.png'),
+      images.load('Fire+Sparks7.png'),
+      images.load('Fire+Sparks8.png'),
+      // ... load the rest of your explosion frames
+    ]).then((sprites) => sprites.map((sprite) => Sprite(sprite)).toList());
   }
 
   late final Sprite _backgroundSprite;
@@ -209,11 +234,18 @@ class MyPhysicsGame extends Forge2DGame {
           // Use fixed coordinates
           Vector2(enemyX, enemyY),
           aliens.getSprite(EnemyColor.randomColor.fileName),
+          _explosionSprites, // Pass explosion sprites to Enemy
+          addExplosion, // Pass the callback to add components
         ),
       );
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     enemiesFullyAdded = true;
+  }
+
+  // Helper function to add components to the game world
+  void addComponentToGame(Component component) {
+    add(component);
   }
 
   void restart() async {
@@ -230,6 +262,15 @@ class MyPhysicsGame extends Forge2DGame {
 
     // Reload the game
     await _initializeGame();
+  }
+
+  void addExplosion(Vector2 position) {
+    final explosion = Explosion(
+      position: position,
+      explosionSprites: _explosionSprites,
+    );
+    world.add(explosion);
+    FlameAudio.play('explosion_1.mp3'); // Play explosion sound
   }
 
   void _makeRandomEnemyJump() {
